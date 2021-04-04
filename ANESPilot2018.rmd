@@ -1,0 +1,634 @@
+---
+title: 'Lab 1: Comparing Means'
+author: 'w203: Statistics for Data Science'
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r, include=FALSE}
+options(tinytex.verbose = TRUE)
+install.packages("anchors")
+install.packages("effectsize")
+install.packages("psych")
+install.packages("moments")
+install.packages("gridExtra")
+install.packages("car")
+install.packages("viridis")
+```
+
+# The Data
+
+We are provided with data from the 2018 ANES Pilot Study.
+
+The intricacies that go into the design of this study, are detailed in [ANES User's Guide and Codebook](https://electionstudies.org/wp-content/uploads/2019/02/anes_pilot_2018_userguidecodebook.pdf) and in [ANES 2018 Pilot Study Questionnaire Specifications ](https://electionstudies.org/wp-content/uploads/2018/12/anes_pilot_2018_questionnaire.pdf)
+
+# Preliminary thoughts about the data
+
+### I.I.D considerations
+
+The ANES survey documentation goes into detail about the sampling mechanism used to select participants. The YouGov panel used to select participants produced this sample of data from a diverse set of of over a million respondants.
+Sample-matching was used to select data-points for this dataset, the respondents of which were matched to actual population data-sets using charateristic-data such as gender, age and education.
+Since the respondants were selected at the outset without any initial conditions they can all be treated as independent. Also since the size of the sample is pretty small compared to the population of 'voters', this samples can be treated as identically-distributed.
+
+### Filtering data - ignoring non-serious or non-honest responses
+
+The data set includes two columns which indicate whether the survey participant has made serious considerations before answering each survey question - "nonserious" and "honest".
+A preliminary look at the data showed that of the 2500 responses, 2007 were assessed by the responders as "always serious", and a slightly larger number (2112) were assessed as "always honest". We believe that the difference between the two numbers can be attributed to a cultural reluctance to not being honest. Of the 2007 "always serious" responses all were always honest except for 23 of them which were honest "most of the time." As such, we chose to filter out the data based on the answers to the "nonserious" question. We believe that the 2007 sample size is large enough for our assessments and will only consider this subset.
+
+ The dataset includes fields named using convention: **<fieldname>_skp** which indicate the number of times the corresponding survey question have been skipped.
+ 
+ Ex: **ftpilice_skp** indicates how many times a participant skipped the question related to column **ftpolice**.
+ 
+Based on documentation, any question can be skipped a maximum of 2-times. We are interested in only those responses which are not skipped. We use these _skp columns to clean data that has been legitimately skipped by participants.
+
+### Feeling thermometer as Likert-scale
+
+The feeling-thermometer widget used to survey the rating for Police and Journalists is intended to be used a **Interval-scale Measurement**. But there have been studies such as this one:
+
+[Evaluation of the Feeling Thermometer](https://electionstudies.org/wp-content/uploads/2018/07/nes002241.pdf)
+
+which seem to indicate there is reason for researchers to believe that participants treat this widget as an **ordinal 9-point likert scale rather than an interval-scale**. Consequently, any data in this research using values gathered from the Feeling-thermometer widget will treat the data as Ordinal.
+
+### Other Notes
+
+- All following tests will be conducted at the desired significance-level of 95%, with corresponding alpha-value = 0.05.
+
+```{r include=FALSE}
+library(ggplot2)
+library(gridExtra)
+library(tidyverse)
+library(moments)
+library(effectsize)
+library(car)
+library(viridis)
+setwd(".")
+# all 
+A = read.csv('anes_pilot_2018.csv')
+summary(A$nonserious)
+summary(6-A$honest)
+#remove never serious
+no_never <- subset(A, nonserious < 5)
+summary(no_never$nonserious<5)
+#only always serious
+serious <- subset(A,nonserious==1)
+summary(serious$nonserious==1)
+#always honest
+honest <- subset(A,A$honest == 5)
+nrow(honest)
+summary(serious$honest)
+#non always honest but always serious
+temp <- subset(serious,honest < 5)
+summary(temp$honest)
+nrow(temp)
+```
+\newpage
+
+# Research Questions
+
+## Question 1: Do US voters have more respect for the police or for journalists?
+
+### Introduction
+
+To explore the outlook of US voters toward police and jounalists, and how these outlooks compare to each other, we begin by **exploring the difference in opinion** a person indicates in their response. Exploring the data, we find these columns that are relevant to this question:
+
+##### **ftpolice**  :: Ordinal data : Indicates Voter’s rating for police (0-100; 100 being most favorable response)
+
+##### **ftjournal** :: Ordinal data : Indicates Voter’s rating for Journalists (0-100; 100 being most favorable response)
+
+##### Concerns about using **ftpolice** and **ftjournal**
+
+1. The survey-questions reflected in **ftpolice** and **ftjournal** use the term 'ratings' for police and journalists respectively. This introduces ambiguity in that the rating could be interpreted as a participant's comment about:
+
+a. Effectiveness of the groups to deliver their responsibilities.
+b. Socio-Politically partisan endorsement of the groups.
+c. Indeed the respect towards the groups.
+d. Pop-culture cool-factor of the groups..? 
+etc
+
+Consequently, any conclusions drawn from analyzing these fields is speculative. But being the only the data available which relates to this research question, we continue with analyzing these fields.
+
+### Exploratory Data Analysis (5 points)
+
+We start with reviewing the data within **ftpolice** and **ftjournal**
+
+**ftpolice**
+```{r echo = FALSE}
+cleaned_serious_t1 <- serious %>% 
+  filter(ftpolice_skp == 0 & ftjournal_skp == 0) %>% 
+  filter(ftpolice >= 0 & ftpolice <= 100 & ftjournal >=0 & ftjournal <=100) %>% 
+  filter(ftpolice != ftjournal)
+
+police_rating <- cleaned_serious_t1$ftpolice
+summary(police_rating)
+```
+A skewness-factor of `r skewness(police_rating)` indicates that the distribution for **ftpolice** is negatively skewed.
+
+**ftjournal**
+```{r echo=FALSE}
+journal_rating <- cleaned_serious_t1$ftjournal
+summary(journal_rating)
+skewness(journal_rating)
+test_1_n <- nrow(cleaned_serious_t1)
+```
+A skewness-factor of `r skewness(journal_rating)` indicates that the distribution for **ftjournal** is slightly negatively skewed.
+
+The range of values in both **ftpolice** and **ftjournal** are ordered. No rearrangement of data is required before we proceed with the test.
+
+##### Notes on cleaning data:
+
+1. The dataset includes fields **ftpolice_skp** and **ftjournal_skp** which indicate the number of times the corresponding survey question have been skipped. Based on documentation, any question can be skipped a maximum of 2-times. We are interested in only those responses which are not skipped. 
+
+2. We need data in variables $ftpolice$ and $ftjounral$ to be in range - (0,100) for data to be valid.
+
+3. For the sign-test, data-points which have equal values for $ftpolice$ and $ftjounral$ are not relevant to this test. These results are ignored.
+
+After filtering, the total number of rows used for this test will be `r test_1_n`.
+
+Following this test's conceptualization, the participant's response to $ftpolice$ and $ftjournal$ can be treated as related data-pair which can then be used to compare relative rating. 
+
+### Hypothesis Test Statement.  (5 points)
+
+Following from the EDA and conceptualization, we use the **Sign-test** to compare the nominal-data representing the nominal-difference in rating a participant gives to $ftpolice$ vs $ftjournal$.
+
+Assumptions to satify before sign test can be run:
+
+**a. Data is ordinal**
+
+As discussed above, the operationalized data are both likert-scale measures which are ordinal and suitable for a Sign-test.
+
+**b. Data is I.I.D**
+
+As discussed above, data samples from the ANES data-set is diverse enough to be treated as IID.
+
+1. Let X be the random variable denoting feeling toward Police. X ties to ftpolice
+
+2. Let Y be the random variable denoting feeling toward Journalists. Y ties to ftjournal
+
+3. **H_0 : P(X<Y) = 0.5**
+  - when comparing X and Y, there is no known difference in feeling toward police vs journalists or put in other words;
+P(X<Y) (P of getting a -ve rank) = P(X>Y)(P of getting a +ve rank) = 0.5
+
+4. **H_a : P(X<Y) != 0.5 **
+  - when comparing X and Y, an alternative hypothesis is stated that there is a noticeable difference in feeling toward police vs journalists. There is no conclusion on which feeling is higher or lower.
+
+
+### Run Sign Test (5 points)
+
+```{r echo=FALSE}
+rate_police_lower = sum(as.numeric(police_rating) < as.numeric(journal_rating), na.rm=T)
+t1_result <- binom.test(rate_police_lower , test_1_n)
+t1_result
+```
+
+##### Statistical significance
+
+The binom-test provides strong evidence that the null-hypothesis can be rejected; with a p-value - `r t1_result$p.value` which is less than the 95% $\alpha$-value of 0.05. 
+
+We reject the hypothesis that voters rate police and journals equally.
+
+##### Practical Significance
+
+To assess the practical significance of the outcome of this sign-test, we highlight the proportion of respondents in the sample that rated police higher vs those which rated the journals higher:
+
+This is given by the probability of success as reported by the binom-test: `r t1_result$estimate`.
+
+Around `r round(100*t1_result$estimate)`% of respondents rated the Police lower than Journalists. In other words, **`r 100-round(100*t1_result$estimate)`% of respondents in this survey rate the Police higher than Journalists**. The Bar chart in Fig_Q1_1 shows the proportion of respondents who rate the police higher.
+<br\>
+
+```{r echo=FALSE}
+pie(c(test_1_n-rate_police_lower, rate_police_lower), main="Fig_Q1_1 : Respondents supporting Police vs Journalists", labels = c("Support Police", "Support Journalists"), radius = 1.01, 
+    col=viridis(2, alpha = 0.5, begin = 0, end = 1, option = "D"), 
+    init.angle = 90)
+```
+
+By how much do they prefer police more than the journalists? The size of this effect can be estimated with a proportion of the effect size indicated in the sample. 
+
+Let 's' be the proportion of 'effect-size' within survey respondents:
+
+s = (Voters favoring Police - Voters favoring journalists) / Total-Voters
+
+```{r echo=FALSE}
+s <- (test_1_n - 2*rate_police_lower)/ test_1_n
+s
+```
+
+For this test the effect size is s = `r s`, a weak effect-size.
+
+And so, although the respondents do favor Police over journalists in their ratings, they do not differ in their rating by a lot.
+
+\newpage
+
+## Question 2: Are Republican voters older or younger than Democratic voters?
+
+### Introduce your topic briefly.  (5 points)
+
+We will be exploring the distribution of the age of voters. We will use the birthyr column to determine the age of the participant and we will use the pid1d and pid1r variables to determine the political afiliation. We will derive a new variable called party using values from pid1d/pid1r to separate the data into two categories D (for democrats) and R (for republians). We will also derive another variable called age that will be calculated using the year of the survey (2018) and the birthyr column.
+
+
+```{r echo = FALSE}
+DR_data = A
+#DR_data = no_never
+#DR_Data = serious
+DR_data = DR_data[((DR_data$pid1d == 1 | DR_data$pid1r == 2) & DR_data$nonserious==1 & DR_data$pid1d_skp == 0 & DR_data$pid1d_skp == 0),c("pid1d", "birthyr")]
+
+DR_data$party <- ifelse(DR_data$pid1d == 1, "D", "R")
+#DR_data = DR_data[(DR_data$pid7x == 1 | DR_data$pid7x == 2 | DR_data$pid7x == 6 | DR_data$pid7x == 7) & DR_data$nonserious==1,c("pid7x", "birthyr")]
+#DR_data$party <- ifelse(DR_data$pid7x == 1 | DR_data$pid7x == 2, "D", "R")
+#DR_data = DR_data[(DR_data$pid7x == 1 | DR_data$pid7x == 2 | DR_data$pid7x == 6 | DR_data$pid7x == 7),c("pid7x", "birthyr")]
+#DR_data$party <- ifelse(DR_data$pid7x == 1 | DR_data$pid7x == 2, "D", "R")
+DR_data$age <- 2018 - DR_data$birthyr
+D_data = DR_data[DR_data$party == "D", c("age")]
+R_data = DR_data[DR_data$party == "R", c("age")]
+```
+### Perform an exploratory data analysis (EDA) of the relevant variables. (5 points)
+
+We split the data into two separate data sets, one for republican voters and one for demogratic voters. We removed participants that skipped questions about their political affiliation pid1d_skp and pid1r_skp. We finally plotted the resulting data using histograms in order to get a sense of the distribution of ages and get a general idea of where the mean for each of the dataset is. We see a negative-skew in the distribution of age in the group of Republicans.
+
+**Democrats age**
+```{r echo = FALSE}
+summary(D_data)
+```
+
+**Republican age**
+
+```{r echo = FALSE}
+summary(R_data)
+```
+
+
+```{r, echo=FALSE, figures-side, fig.show="hold", out.width="50%"}
+hist(D_data, main = "Distribution of Democrats by age", xlab = "Age of Democrats", col = viridis(10, alpha = 0.8, begin = 0, end = 1, option = "D"))
+hist(R_data, main = "Distribution of Republicans by age", xlab = "Age of Republicans", col = viridis(10, alpha = 0.8, begin = 0, end = 1, option = "D"))
+```
+In order to help us determine what testing method to use in the next step, we also ran the Levene test on the two datasets. This allows to understand the variances in the two datasets. This is a test to see if the null hypothesis that the variances of both of the samples is the same.
+
+```{r echo = FALSE}
+y <- c(D_data, R_data)
+group <- as.factor(c(rep(1, length(D_data)), rep(2, length(R_data))))
+leveneTest(y, group)
+```
+
+We were unable to reject the null hypothesis that the variances of the two samples is the same. 
+
+### Based on your EDA, select an appropriate hypothesis test.  (5 points)
+
+Because the variances of two samples can be considered the same. This was indicated by the Levene test, we will be using Two Sample two tailed t-test. The null hypothesis is that the mean age of both populations is the same. If we are able to reject the null hypothesis then our alternate hypothesis is that the average age of democrats is not the same as the average age of republicans. We will then use Cohen's D to determine the direction and effect of the difference, after we rejet the null hypothesis.
+
+**H_0 : u1 == u2**
+
+**H_a : u1 !=  u2**
+
+The two assumptions for the Two Sample t-test are that
+a. the data in both of the samples is normally distributed and 
+
+b. the variances of the two samples are the same 
+
+We confirmed that the data is normally distributed during our EDA, the Republican dataset has a negative skew, but our sample size is large enough that the CLT helps us make a normal approximation. We confirmed that the variances can be considered equal by running the Levene test and failing to reject the null hypothesis that the variances of the samples is the same. We performed this test during our EDA step.
+
+### Conduct your test. (5 points)
+
+
+```{r echo=FALSE}
+rep_dem_t_test <- t.test(D_data, R_data, alternative="two.sided", var.equal = TRUE)
+rep_dem_t_test
+```
+
+
+The two tailed t-test says that we cannot reject the null hypothesis that both samples have the same mean (Democrats and Republicans are on average the same age) because the p value is greater than 0.05. The result of our test was a p value of 0.08. since we decided on a alpha level of 5% and our p values are greater than our alpha level of 0.05, the results are statistically significant.
+
+We also tried to use Cohen's D formula to calculate the statistical effect of the results we obtained from the t-test 
+
+(M1 - M2) / Pooled_Std
+
+```{r echo=FALSE}
+cohen_d_calc <- ((mean(D_data) - mean(R_data)) / sd_pooled(D_data, R_data))
+cohen_d_calc
+#cohens_d(D_data, R_data)
+```
+
+We got a similar result, with the Cohen's test showing a small effect size (less than 0.2) and the negative numbershowing that the average Democrat's age is less than that of a Republican's. In conclusion, both tests show that we cannot answer the question with the given data. 
+
+\newpage 
+
+## Question 3: Do a majority of independent voters believe that the federal investigations of Russian election interference are baseless?
+
+### Introduce your topic briefly.  (5 points)
+
+* To identify independent voters we used the two variables pid1d, and pid1r
+* Regarding the Russia investigation itself we considered three different variables: russia16, coord16, muellerinv. 
+We decided not to include coord16 since it is more of an opinion about the actions of Trump’s campaign. If a respondent believes that Russia interfered, it does not matter whether he/she believes that Donald Trump coordinated with them or not. 
+The question regarding Bob Mueller’s investigation (muellerinv) may be interpreted in two ways: 
+a. approve/disapprove of the investigation being conducted at all 
+b. approve/disapprove of the way the investigation was conducted, which could be either because they believe that there was or was no basis for it, or because they agree/disagree with the methods and/or the result.
+So we did not include this variable either.
+Our conclusion is that the Russian interference is best covered by the variable russia16. 
+
+Gaps between your operational definitions and the concepts: 
+
+None of the survey questions directly answers question 3. We assumed here that the respondents think that the investigations are baseless if they believe that Russia did not interfere with the elections.  
+
+### Perform an exploratory data analysis (EDA) of the relevant variables. (5 points)
+
+There are 625 observations with 353 yes answers. We did not find any invalid answers in the Russia variable.
+
+```{r echo=FALSE}
+indep <- subset(serious, (pid1d == 3 | pid1r == 3))
+summary(serious$pid1d==3)
+num_indep <- nrow(indep)
+print(paste("number of independant voter ",nrow(indep)))
+x <- subset(indep, (russia16>2 | russia16 < 1))
+print(paste("number of invalid answers in russia16 ",nrow(x)))
+# Russia interfered
+valid_russia <- subset(indep, (russia16>0))
+print(paste("number of valid answers in russia16 ",nrow(valid_russia)))
+print(paste("sample size ",nrow(indep)))
+interfered <- subset(valid_russia, (russia16==1))
+num_interfered <- nrow(interfered)
+print(paste("Russia interfered ", nrow(interfered)))
+percent_interfered = nrow(interfered)/num_indep
+print(paste("Russia interfered %", percent_interfered*100))
+temp <- subset(indep, (russia16==2))
+print(paste("Russia did not interfere ",nrow(temp)))
+```
+
+### Based on your EDA, select an appropriate hypothesis test.  (5 points)
+
+Conditions for the binomial test are satisfied:
+
+**a. The data is categorical, each answer is yes/no.**
+
+**b. the data is iid and significantly less than the population size**
+
+We will set "yes" answers (not baseless) to 1 (success) and "no" answers (baseless) to 0 (failure)
+
+**Our null hypothesis is probability of success = 0.50**
+
+**Our alternative is that the probability of success is not equal to 0.50**
+
+### Conduct your test. (5 points)
+
+**Statistical significance**
+The 95% confidence interval for this sample is [0.53,0.60] and the p-value is 0.14%. It is less than 5% so we reject the null hypothesis that p = 0.5 versus the alternative that the probability is not 0.5.
+```{r echo=FALSE}
+# Hypothesis testing - one sided: 
+binom.test(num_interfered,num_indep, p=0.50, alternative="two.sided", conf.level = 0.95)
+x=625-353
+print(paste("Effect size: ",(353-x)/625))
+```
+
+**Practical significance**
+The practical significance can be gauged by calculating the effect size, which is defined as s = (Not baseless - baseless) / total 
+Our sample probability of success is 56%. The effect size is about 13% which denotes a weak effect. 13% more people in our sample believed that the investigation was non baseless than thought it was baseless.
+
+\newpage
+## Question 4: Was anger or fear more effective at driving increases in voter turnout from 2016 to 2018?
+
+### Introduce your topic briefly.  (5 points)
+
+* To identify voter turnout we extracted the rows that corresponded to people who did not vote in 2016 (including those who thought that they did not vote in 2016), but who voted in 2018 or thought that they had voted in 2018.
+
+* Anger and fear variables. The survey provides us with a set of likert variables, in the GLOBAL EMOTION battery, aimed at gauging the levels of anger and fear. We first looked at the two most obvious variables geangry and geafraid. The data thus obtained did not give us an answer to the question since we were not able to reject the null hypothesis that one was more prevalent than the other in the population we considered. We then added two more variables that were close to the first gebitter and geworry.  With these variables we were able to draw a conclusion.
+
+Gaps between your operational definitions and the concepts: 
+
+* This test measures how angry/afraid were the people who did not vote in 2016 but voted in 2018. It does not show that either sentiment was a driver of the higher turnout.
+
+* The survey asks about the level of emotion at the time of the survey. We do not know what the respondent's level of emotion was in 2016. It would have been good to know if the level of emotion changed in tandem with the increased turnout. 
+
+* In general turnout in off-years (non presidential election), such as 2018, is much lower than in presidential election years (2016). Comparing the 2018 data to the 2016 data probably results in an underestimation of turnout increase. Comparing turnout in 2014 to 2018 (instead of 2016 to 2018) would have been more accurate.  
+
+### Perform an exploratory data analysis (EDA) of the relevant variables. (5 points)
+
+. There are , where we just add the numbers corresponding to the variables.
+Our score for anger is defined as geangry and for fear as geafraid
+
+##### **geangry**  :: Ordinal data : Indicates respondent's general degree of anger (1-5; 5 being most intense)
+
+##### **geafraid** :: Ordinal data : Indicates respondent's general degree of fear (1-5; 5 being most intense)
+
+To clean the data we needed to remove all negative numbers (-7 for no answer and -1 for invalid answer). We set those to 0 so that they had no effect on the sum that we will take later. 
+We also removed all rows were both variables were equal to -7 or both equal to -1, since that is equivalent to the respondent having no feeling of fear or anger. 
+
+Our score for anger is defined as geangry and for fear as geafraid. Both measures have the same scale and are sorted in such a way that the larger the number, the more intense the emotion. The graph below shows the sample distribution of the difference between the anger score and the Fear score using respectively geangry and afraid. The graph gives some indication that the number of positive and negative scores are about equal.   
+
+The summaries for our variables give a similar indication.
+
+```{r echo=FALSE}
+#voted in 2018
+voted18 = subset(serious, turnout18 < 4)
+# add those who are not sure
+voted18 = subset(serious, (turnout18 < 4) | (turnout18==5 & turnout18ns==1))
+print(paste("voted in 2018: ",nrow(voted18)))
+#voted in 2018 not in 2016
+newvoter <- subset(voted18, (turnout16 == 2) | (turnout16 == 3 & turnout16b ==2))
+print(paste("voted in 2018 and not in 2016: ",nrow(newvoter)))
+newvoter <- subset(newvoter, (geangry >0 | geafraid > 0))
+print(paste("voted in 2018 and not in 2016 and angry/afraid: ",nrow(newvoter)))
+#convert (-7) to 0 so as not to subtract from anger/fear
+newC <- data.frame(newvoter)
+newC[newC$geangry<0] <- 0
+newC[newC$geafraid<0] <- 0
+# garphs
+library(ggplot2)
+ggplot() + 
+ geom_histogram(data = newC, aes(x = geangry-geafraid, fill = "r"), alpha = 0.5) +
+  scale_colour_manual(name ="Difference", values = c("r" = "red", "b" = "blue"), labels="") +
+  scale_fill_manual(name ="Count", values = c("r" = "red", "b" = "blue"), labels="") +
+  labs(title="Angry less Afraid ", x ="Value", y = "Count")
+
+#Summary
+print("Angry")
+summary(newC$geangry)
+print("Afraid")
+summary(newC$geafraid)
+```
+
+### Based on your EDA, select an appropriate hypothesis test.  (5 points)
+
+Conditions to satify before sign test is run:
+
+**a. Data is ordinal**
+
+As discussed above, the variables are both likert-scale measures which are ordinal and listed in increasing order, suitable for a Sign-test. 
+
+**b. Data is I.I.D**
+
+As discussed above, data samples from the ANES data-set is diverse enough to be treated as IID. The respondent are the unit of observation, and there are two measurements for each unit.
+
+- Let X be the random variable denoting anger. X ties to geanger
+
+- Let Y be the random variable denoting fear. Y ties to geafraid
+
+**H_0 : P(X<Y) = 0.5**
+  - when comparing X and Y, there is no known difference in anger versus fear, in other words, P(X<Y) (P of seeing less anger than fear) = P(X>Y)(P of seeing more anger than fear) = 0.5
+
+**H_a : P(X<Y) != 0.5 **
+  - when comparing X and Y, the alternative hypothesis is: there is a noticeable difference in feelings of anger versus those of fear. There is no conclusion on which feeling is higher or lower.
+
+
+We transform the data into a (yes/no) data by assigning a value of 1 if the level of anger is higher than the level of fear (as measured by the number above), 0 otherwise. That gives us a Bernoulli variable. So we use a binomial test.
+
+### Conduct your test. (5 points)
+
+Our null hypothesis the probability of getting 1 is the same as the probability of getting 0 (50%). 
+At a 95% confidence level p value for the test, which is about 22%, is larger than our 5% threshold. So we fail to reject the null hypothesis that the higher turnout was equally due to anger or fear.
+The 95% confidence interval is [0.250, 0.556]. There is a 95% chance that the true probability of anger less fear is in this interval.
+
+
+```{r echo=FALSE}
+
+more_angry <- ifelse(newC$geangry - newC$geafraid,1,0)
+num_new = nrow(newC)
+num_angry= sum(more_angry)
+#print(paste("Number of more angry: ",num_angry, " More afraid: ",num_new-num_angry, " Total: ",num_new))
+binom.test(num_angry, num_new, p=0.5, alternative = "two.sided", conf.level = 0.95)
+print(paste("Effect size: ", abs(num_angry-(num_new-num_angry))/num_new))
+```
+
+The effect size of the test is about 21%. The practical significance of the test is small/medium.
+
+**Note** 
+We chose geangry and geafraid as our variables. It should be noted that some of the other variables, such as gebitter and geworry, respectively, could be construed as gauges for the same or similar feelings. Although perhaps not the exact same feelings, a next step in this study could be the inclusion of these other variables. 
+
+\newpage
+
+## Question 5: Has the 2017 tax-cut favored Low and Middle income families or High-income families?
+
+### Overview  (10 points)
+
+The Tax Cuts and Jobs Act of 2017 went into effect in 2018. As such, by the time of this survey, December 2018, respondents had not seen its effect in concrete terms. The survey, however, asks whether respondents thought that it had helped their economic situation. The US Treasury website had claimed that the act would "help lower- and middle-income workers get ahead." We check to see if the responders agreed with the government's assertion. 
+
+This is an important question since the belief that an act was passed to specifically help a specific segment of the population, then, all things being equal, that segment would be more inclined to vote for the administration. 
+
+Specifically, we seek to answer the question: 
+
+*"Did more lower and middle income families think that the Tax Cut Act of 2017 helped them than high income families?"*
+
+We use the answers to survey-question: "Do you think the 2017 tax cuts helped or hurt your family’s economic situation, or have they
+not made any difference either way?". The responses for this question are in column - **taxfam**.
+
+We also use the respondent's family incomes for 2017 to determine whether they should be in one of the two buckets: low-middle-income / high-income.
+
+As mentioned above this is simply the impressions of the respondents at the time of survey. Their opinion could have changed a few months later when they actually saw their 2018 tax bill.
+
+#### Operationalization
+
+##### **faminc_new**  :: Ordinal data : Indicates respondent's income-bracket.
+
+Survey information does not clarify if the data in **faminc_new** is normalized to the size of the family. We continue assuming this data has been normalized to the size of family but if this assumption is false, this analyses would not be accurate.
+
+##### **taxfam** :: Ordinal data : Indicates if respondent felt 2017 tax-cut help their family financially.
+
+To conduct the test, data from **faminc_new** will be used to group respondents by their family-income and within these groups, the response recorded in **taxfam** will be reviewed. 
+
+The test will seek to find evidence that there is a noticable difference in low-middle income families' response to **taxfam** when compared to that of the high-income-group. If there is indication of a noticable difference, an effect size and it's practical significance will be discussed.
+
+### Exploratory Data Analysis (5 points)
+
+##### Low-Middle-High income ranges in faminc_new
+
+```{r echo=FALSE}
+low_mid_income_filtered <- serious %>% 
+  filter(taxfam_skp==0) %>% 
+  filter(faminc_new>=1 & faminc_new<=11) %>% 
+  filter(taxfam>=1 & taxfam<=7) %>% 
+  pull(taxfam)
+
+high_income_filtered <- serious %>% 
+  filter(taxfam_skp==0) %>% 
+  filter(faminc_new>=12) %>% 
+  filter(taxfam>=1 & taxfam<=7) %>% 
+  pull(taxfam)
+
+test_5_nlow <- nrow(as.data.frame( low_mid_income_filtered))
+test_5_nhigh <- nrow(as.data.frame( high_income_filtered))
+```
+
+**Reference - Link : [Pew-Research - Are you in the American middle class?](https://www.pewresearch.org/fact-tank/2020/07/23/are-you-in-the-american-middle-class/)**
+
+This Pew-research article calls out the following dollar-income ranges of families in 2018. The relevant categories are accompanied by histograms showing responses in the ANES data-set, to the question - "Do you appreciate the tax-cut", within the specific category: 
+
+```{r echo=FALSE, fig.show="hold", out.width="50%"}
+hist(low_mid_income_filtered, main = "Figure-Q5-1", xlab = "Low-Mid Income Appreciate tax-cut? Low-x is more favorable", ylab = "Frequency",
+     col = viridis(10, alpha = 1, begin = 0, end = 1, option = "D"))
+hist(serious[serious$faminc_new>=12 & serious$faminc_new<=16,]$taxfam, main = "Figure-Q5-2", xlab = "'High-Income Appreciate tax-cut? Low-x is more favorable.'", ylab = "Frequency",
+     col = viridis(10, alpha = 1, begin = 0, end = 1, option = "D"))
+hist(serious[serious$faminc_new==97,]$taxfam, main = "Figure-Q5-3", xlab = "'Wealthy Appreciate tax-cut? Low-x is more favorable.'", ylab = "Frequency",
+     col = viridis(10, alpha = 1, begin = 0, end = 1, option = "D"))
+```
+
+**1. Lower-income households - Less than 48,500 - *faminc_new* values [1-5]**
+
+**2. Middle-income households - 48,500 - 145,500 - *faminc_new* values [6-11]**
+
+The column **taxfam** is ordinal and the ordering of the range of values is pre-determined. So no rearragement of data is required. 
+
+A histogram for the low and middle income groups together is in Figure-Q5-1:
+
+Figure-Q5-1 shows an approximately normal-distribution of response centered on '4 - Makes no Difference', with little noticeable skew.
+
+**3. High-Income households - greater than $145,500 - faminc_new values [12-16]**
+
+A histogram for the high-income group is in - Figure-Q5-2.
+
+Figure-Q5-2 shows an approximately normal-distribution of response centered on '4 - Makes no Difference', with little noticeable skew.
+
+**4. Very-High-Income households**
+
+**faminc_new** includes an outlier value - 97. It is not clear in documentation what this value indicates, and why it has such an outlier value. A histogram for the high-income group is in Figure-Q5-3.
+
+Figure-Q5-3 is similar to Figure-Q5-2 above, of the high-income-group. To simplify the test, we include these numbers into the high-income bracket (We suspect this category might be for very-high-income groups.)
+
+**NOTE** - From looking at the histograms at this point, we get an indication that this test is not expected to show a noticable difference in response in the different categories. All distributions are approximates normal and centered on '4 - Makes No Difference'. We run the test to confirm our presupposition.
+
+##### Notes on cleaning data:
+
+1. The dataset includes fields **taxfam_skp** which indicate the number of times the corresponding survey question have been skipped. Based on documentation, any question can be skipped a maximum of 2-times. We are interested in only those responses which are not skipped. 
+
+2. We need data in variable $taxfam$ to be in range - (1-7) for data to be valid.
+
+### Hypothesis Test statement.
+
+In constructing the data for this test, Individuals are drawn from an IID superset and grouped into 2 categories:
+
+1. Low-middle-Income respondents - size: `r test_5_nlow`
+
+2. High-income respondents - size: `r test_5_nhigh`
+
+These two sub-samples of the superset can be treated as IID samples. We compare the distributions of these two independent samples using the **Mann-Whitney U-test (Wilcoxon Rank sum test)**
+
+**Assumptions for Mann-Whitney U-test and Hypothesis Of Comparisons**
+
+1. Ordinal Data : data in **taxfam** is ordinal data with 7 categories
+
+2. Independently drawn pairs for test - Since the groups are independent, any pair drawn from the group is independent of all other pairs in the group.
+
+Let $X$ be a RV representing Low-middle-income respondents; $Y$ be a RV representing high-income-respondents. The Null-hypothesis for the Hypothesis of Comparisions for a Mann-Whitney-U-Test states:
+
+**H_0: P(X<Y) = P(X>Y)**
+
+The alternative hypothesis states that the distribution is not identical with: 
+
+**H_a: P(X<Y) != P(X>Y)**
+
+### Conduct your test. (2 points)
+
+```{r echo=FALSE}
+test5_result <- wilcox.test(low_mid_income_filtered, high_income_filtered)
+test5_result
+```
+
+##### Statistical Significance
+
+The p-value from the Mann-Whitney Test is `r test5_result$p.value` which is greater than alpha-value for a 95% confidence-level test. **We fail to reject the Null-Hypothesis**. 
+
+We also look back at the histograms of the two groups Figure_Q5_1, Figure_Q5_2, these figures give no indication of a difference in the two samples and this is bolstered by the results of the test.
+
+### Conclusion (3 points)
+
+In designing this test, we try to take a pulse of the US-voter population on whether they agree with the US Treasury Department's assertion that low and middle-income families would benefit from the Tax Cuts and Jobs Act of 2017. 
+
+The data shows no clear evidence supporting this claim, raising ethical questions about the claim and also highlights the need to analyze the real beneficiaries of the Act and its policies.
+
+This report also attempts to give pause to voters in the low-middle-income groups to evaluate the authenticity of claims made by the government when they exercise their right to vote in the next election cycle.
